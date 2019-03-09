@@ -1,0 +1,15 @@
+*.jdi
+*.bak
+*.qws
+*.qpf
+*.qarlog
+*.log
+*.swp
+csrc/*
+DVEfiles/*
+simv.daidir/*
+simv
+*.key
+*.vpd
+AN.DB/*
+*.tcl.old
