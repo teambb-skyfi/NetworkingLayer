@@ -12,7 +12,8 @@ module Pulser
 
   logic [N_CT-1:0] count;
   logic            clear, up;
-  Counter #(.WIDTH(N_CT)) pulseCounter(.D(4'b0), .load(clear), .Q(count), .*);
+  Counter #(.WIDTH(N_CT)) pulseCounter(.D({N_CT{1'b0}}), .load(clear),
+                                       .Q(count), .*);
 
   // State register
   enum {IDLE, PULSE} s, ns;
@@ -56,7 +57,7 @@ module Pulser_test;
   logic start;
   logic avail;
   logic pulse;
-  Pulser #(.COUNT(10)) dut(.*);
+  Pulser #(.COUNT(50)) dut(.*);
 
   default clocking cb @(posedge clk);
     default input #1step output #2;
@@ -73,6 +74,11 @@ module Pulser_test;
     ##1 cb.rst_n <= 1'b1;
     ##1 cb.start <= 1'b1;
     ##1 cb.start <= 1'b0;
+    @(negedge cb.pulse);
+
+    ##1 cb.start <= 1'b1;
+    @(negedge cb.pulse);
+
     @(negedge cb.pulse);
 
     ##1 $finish;
