@@ -127,18 +127,22 @@ module Modulator
 
   logic         data_en;
   logic [N-1:0] data_D, data_Q;
-  Register #(.WIDTH(N)) dataReg(.D(data_D), .en(data_en), .Q(data_Q), .*);
+  Register #(.WIDTH(N)) dataReg(.D(data), .en(data_en), .Q(data_Q), .*);
 
-  assign data_en = symbol_clear;
-  assign data_D = valid ? data : {N{1'b0}};
+  logic valid_en;
+  logic valid_Q;
+  Register #(.WIDTH(1)) validReg(.D(valid), .en(valid_en), .Q(valid_Q), .*);
 
-  assign avail = symbol_clear;
+  assign data_en = symbol_clear,
+         avail = symbol_clear,
+         valid_en = symbol_clear;
 
-  logic pulser_start, pulser_avail;
+  logic pulser_start, pulser_avail, pulser_out;
   Pulser #(.COUNT(PULSE_CT)) pulser(.start(pulser_start), .avail(pulser_avail),
-                                    .*);
+                                    .pulse(pulser_out), .*);
 
   assign pulser_start = (slot_ct == 0) && (data_Q == symbol_id);
+  assign pulse = pulser_out && valid_Q;
 endmodule: Modulator
 
 // Modulator testbench
@@ -152,7 +156,7 @@ module Modulator_test;
   localparam int SEED = 18500;
   initial $srandom(SEED);
 
-  localparam PULSE_CT = 2;
+  localparam PULSE_CT = 1;
   localparam N = 2;
   localparam L = 4;
   logic         rst_n;
@@ -179,8 +183,12 @@ module Modulator_test;
     ##1 cb.rst_n <= 1'b1;
 
     repeat (10) begin
-      @(negedge cb.pulse);
+      @(posedge cb.avail);
       cb.data <= $urandom;
+      randcase
+        4: cb.valid <= 1;
+        1: cb.valid <= 0;
+      endcase
     end
 
     @(posedge cb.avail);
