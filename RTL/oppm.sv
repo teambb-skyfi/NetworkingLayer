@@ -210,44 +210,6 @@ module Encoder
   output logic             avail, // Data can be latched
   output logic             pulse  // Output pulse
 );
-  /*
-  localparam N_SZ = $clog2(COUNT+1);
-
-  logic [N_SZ-1:0] count;
-  logic            clear, up;
-  Counter #(.WIDTH(N_SZ)) pulseCounter(.D({N_SZ{1'b0}}), .load(clear),
-                                       .Q(count), .*);
-
-  // State register
-  enum {IDLE, PULSE} s, ns;
-  always_ff @(posedge clk, negedge rst_n) begin
-    if (~rst_n)
-      s <= IDLE;
-    else
-      s <= ns;
-  end
-
-  // Output logic
-  always_comb begin
-    unique case (s)
-      IDLE: begin
-        ns = start ? PULSE : IDLE;
-        clear = ~start;
-        up = 1'b0;
-        avail = 1'b1;
-        pulse = 1'b0;
-      end
-      PULSE: begin
-        ns = (count < COUNT) ? PULSE : IDLE;
-        clear = (count >= COUNT);
-        up = (count < COUNT);
-        avail = 1'b0;
-        pulse = (count < COUNT);
-      end
-    endcase
-  end
-  */
-
   localparam PRE_CT_SZ = $clog2(PRE_CT+1);
   logic [PRE_CT_SZ-1:0] count_pre;
   logic                 clear_pre, up_pre;
@@ -338,13 +300,18 @@ module Encoder_test;
 
     ##1 cb.rst_n <= 1'b1;
 
-    repeat (2) begin
-      @(posedge cb.avail);
-      cb.data <= $urandom;
-      cb.start <= 1'b1;
-      @(negedge cb.avail);
-      cb.start <= 1'b0;
-    end
+    @(posedge cb.avail);
+    cb.data <= $urandom;
+    cb.start <= 1'b1;
+    @(negedge cb.avail);
+    cb.start <= 1'b0;
+
+    @(posedge cb.avail);
+    ##20;
+    cb.data <= $urandom;
+    cb.start <= 1'b1;
+    @(negedge cb.avail);
+    cb.start <= 1'b0;
 
     @(posedge cb.avail);
     ##1 $finish;
