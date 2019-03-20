@@ -89,7 +89,6 @@ module Pulser_test;
 endmodule: Pulser_test
 
 //---- Modulator
-// Modulates 
 module Modulator
 #(parameter PULSE_CT, // Pulse width in clock ticks
             N,        // Data size in bits
@@ -195,3 +194,159 @@ module Modulator_test;
     ##1 $finish;
   end
 endmodule: Modulator_test
+
+//---- Encoder
+module Encoder
+#(parameter PULSE_CT, // Pulse width in clock ticks
+            N_MOD,    // Modulation data size in bits
+            L,        // Time slot size in clock ticks
+            N_PKT,    // Data packet size in bits
+            PRE_CT    // Number of preamble symbols to transmit
+)
+ (input  logic             clk,   // Clock
+  input  logic             rst_n, // Asynchronous reset active low
+  input  logic [N_PKT-1:0] data,  // Data packet to transmit
+  input  logic             start, // Start transmission
+  output logic             avail, // Data can be latched
+  output logic             pulse  // Output pulse
+);
+  /*
+  localparam N_SZ = $clog2(COUNT+1);
+
+  logic [N_SZ-1:0] count;
+  logic            clear, up;
+  Counter #(.WIDTH(N_SZ)) pulseCounter(.D({N_SZ{1'b0}}), .load(clear),
+                                       .Q(count), .*);
+
+  // State register
+  enum {IDLE, PULSE} s, ns;
+  always_ff @(posedge clk, negedge rst_n) begin
+    if (~rst_n)
+      s <= IDLE;
+    else
+      s <= ns;
+  end
+
+  // Output logic
+  always_comb begin
+    unique case (s)
+      IDLE: begin
+        ns = start ? PULSE : IDLE;
+        clear = ~start;
+        up = 1'b0;
+        avail = 1'b1;
+        pulse = 1'b0;
+      end
+      PULSE: begin
+        ns = (count < COUNT) ? PULSE : IDLE;
+        clear = (count >= COUNT);
+        up = (count < COUNT);
+        avail = 1'b0;
+        pulse = (count < COUNT);
+      end
+    endcase
+  end
+  */
+
+  localparam PRE_CT_SZ = $clog2(PRE_CT+1);
+  logic [PRE_CT_SZ-1:0] count_pre;
+  logic                 clear_pre, up_pre;
+  Counter #(.WIDTH(PRE_CT_SZ)) preambleCounter(.D({PRE_CT_SZ{1'b0}}),
+                                               .load(clear_pre), .up(up_pre),
+                                               .Q(count_pre), .*);
+
+  logic [N_MOD-1:0] data_mod;
+  logic             valid_mod;
+  logic             avail_mod;
+  Modulator #(.PULSE_CT(PULSE_CT), .N(N_MOD), .L(L)) modder(.data(data_mod),
+    .valid(valid_mod), .avail(avail_mod), .*);
+
+  // State register
+  enum {IDLE, PREAM} s, ns;
+  always_ff @(posedge clk, negedge rst_n) begin
+    if (~rst_n)
+      s <= IDLE;
+    else
+      s <= ns;
+  end
+
+  // Output logic
+  always_comb begin
+    ns = s;
+    avail = 1'b0;
+    // pulse is output of modder
+    clear_pre = 1'b0;
+    up_pre = 1'b0;
+    data_mod = {N_MOD{1'b0}};
+    valid_mod = 1'b0;
+
+    unique case (s)
+      IDLE: begin
+        ns = start ? PREAM : IDLE;
+        avail = 1'b1;
+        clear_pre = ~start;
+        valid_mod = start;
+      end
+      PREAM: begin
+        ns = (count_pre < PRE_CT) ? PREAM : IDLE; //TODO: Go to data tx
+        avail = 1'b0;
+        clear_pre = (count_pre >= PRE_CT);
+        up_pre = avail_mod & (count_pre < PRE_CT);
+        valid_mod = 1'b1;
+      end
+    endcase
+  end
+endmodule: Encoder
+
+// Encoder testbench
+module Encoder_test;
+  logic clk;
+  initial begin
+    clk = 1'b1;
+    forever #5 clk = ~clk;
+  end
+
+  localparam int SEED = 18500;
+  initial $srandom(SEED);
+
+  localparam PULSE_CT = 1;
+  localparam N_MOD = 2;
+  localparam L = 4;
+  localparam N_PKT = 8;
+  localparam PRE_CT = 3;
+  logic             rst_n;
+  logic [N_PKT-1:0] data;
+  logic             start;
+  logic             avail;
+  logic             pulse;
+  Encoder #(.PULSE_CT(PULSE_CT), .N_MOD(N_MOD), .L(L), .N_PKT(N_PKT),
+    .PRE_CT(PRE_CT)) dut(.*);
+
+  default clocking cb @(posedge clk);
+    default input #1step output #2;
+    output negedge rst_n;
+    output data;
+    output start;
+    input  avail;
+    input  pulse;
+  endclocking: cb
+
+  initial begin
+    rst_n = 1'b0;
+    data = 2'b1;
+    start = 1'b1;
+
+    ##1 cb.rst_n <= 1'b1;
+
+    repeat (2) begin
+      @(posedge cb.avail);
+      cb.data <= $urandom;
+      cb.start <= 1'b1;
+      @(negedge cb.avail);
+      cb.start <= 1'b0;
+    end
+
+    @(posedge cb.avail);
+    ##1 $finish;
+  end
+endmodule: Encoder_test
