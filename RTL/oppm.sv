@@ -197,6 +197,8 @@ endmodule: Modulator_test
 
 //---- Encoder
 module Encoder
+// Encodes packets of data in sequences of pulses.
+// Data is sent MSB-first.
 #(parameter PULSE_CT, // Pulse width in clock ticks
             N_MOD,    // Modulation data size in bits
             L,        // Time slot size in clock ticks
@@ -223,8 +225,22 @@ module Encoder
   Modulator #(.PULSE_CT(PULSE_CT), .N(N_MOD), .L(L)) modder(.data(data_mod),
     .valid(valid_mod), .avail(avail_mod), .*);
 
+  logic             data_reload, data_shift;
+  logic [N_MOD-1:0] data_Q;
+  ShiftRegister #(.INWIDTH(N_PKT), .OUTWIDTH(N_MOD)) dataReg(.D(data),
+    .reload(data_reload), .shift(data_shift), .Q(data_Q), .*);
+
+  localparam DATA_PULSE_CT = (N_PKT+N_MOD-1) / N_MOD; // Ceiling division
+  localparam DATA_PULSE_SZ = $clog2(DATA_PULSE_CT+1);
+  logic [DATA_PULSE_SZ-1:0] count_dp;
+  logic                     clear_dp, up_dp;
+  Counter #(.WIDTH(DATA_PULSE_SZ)) dataPulseCounter(.D({DATA_PULSE_SZ{1'b0}}),
+                                                    .load(clear_dp),
+                                                    .up(up_dp), .Q(count_dp),
+                                                    .*);
+
   // State register
-  enum {IDLE, PREAM} s, ns;
+  enum {IDLE, PREAM, DATA} s, ns;
   always_ff @(posedge clk, negedge rst_n) begin
     if (~rst_n)
       s <= IDLE;
@@ -237,10 +253,18 @@ module Encoder
     ns = s;
     avail = 1'b0;
     // pulse is output of modder
+
     clear_pre = 1'b0;
     up_pre = 1'b0;
+
     data_mod = {N_MOD{1'b0}};
     valid_mod = 1'b0;
+    
+    data_reload = 1'b0;
+    data_shift = 1'b0;
+
+    clear_dp = 1'b0;
+    up_dp = 1'b0;
 
     unique case (s)
       IDLE: begin
@@ -248,13 +272,24 @@ module Encoder
         avail = 1'b1;
         clear_pre = ~start;
         valid_mod = start;
+        data_reload = start;
+        clear_dp = ~start;
       end
       PREAM: begin
-        ns = (count_pre < PRE_CT) ? PREAM : IDLE; //TODO: Go to data tx
+        ns = (count_pre < PRE_CT) ? PREAM : DATA;
         avail = 1'b0;
         clear_pre = (count_pre >= PRE_CT);
         up_pre = avail_mod & (count_pre < PRE_CT);
         valid_mod = 1'b1;
+      end
+      DATA: begin
+        ns = (count_dp < DATA_PULSE_CT) ? DATA : IDLE;
+        avail = 1'b0;
+        data_mod = data_Q;
+        valid_mod = 1'b1;
+        data_shift = avail_mod & (count_dp < DATA_PULSE_CT);
+        clear_dp = (count_dp >= DATA_PULSE_CT);
+        up_dp = avail_mod & (count_dp < DATA_PULSE_CT);
       end
     endcase
   end
@@ -295,25 +330,25 @@ module Encoder_test;
 
   initial begin
     rst_n = 1'b0;
-    data = 2'b1;
-    start = 1'b1;
+    data = {N_MOD{1'b0}};
+    start = 1'b0;
 
     ##1 cb.rst_n <= 1'b1;
 
-    @(posedge cb.avail);
-    cb.data <= $urandom;
-    cb.start <= 1'b1;
-    @(negedge cb.avail);
-    cb.start <= 1'b0;
+    repeat (10) begin
+      cb.data <= $urandom;
+      cb.start <= 1'b1;
+      @(negedge cb.avail);
+      cb.start <= 1'b0;
 
-    @(posedge cb.avail);
-    ##20;
-    cb.data <= $urandom;
-    cb.start <= 1'b1;
-    @(negedge cb.avail);
-    cb.start <= 1'b0;
+      repeat (dut.DATA_PULSE_CT + dut.PRE_CT)
+        @(negedge cb.pulse);
 
-    @(posedge cb.avail);
+      // Random gap between packets
+      repeat ($urandom_range(0, 1) * L * (2**N_MOD))
+        ##1;
+    end
+
     ##1 $finish;
   end
 endmodule: Encoder_test
