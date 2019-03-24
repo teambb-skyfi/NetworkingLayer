@@ -61,29 +61,6 @@ module Modulator
   output logic         avail, // Data can be latched
   output logic         pulse  // Output pulse
 );
-
-  localparam L_SZ = $clog2(L+1);
-  logic [L_SZ-1:0] slot_ct;
-  logic            slot_clear, slot_up;
-  Counter #(.WIDTH(L_SZ)) slotCounter(.D({L_SZ{1'b0}}), .load(slot_clear),
-                                      .up(slot_up), .Q(slot_ct), .*);
-  assign slot_clear = (slot_ct == L-1);
-  assign slot_up = (slot_ct != L-1);
-
-  localparam SYMBOL_CT = 2**N - 1;
-  localparam SYMBOL_SZ = N;
-  logic [SYMBOL_SZ-1:0] symbol_id;
-  logic                 symbol_clear, symbol_up;
-  Counter #(.WIDTH(SYMBOL_SZ)) symbolCounter(.D({SYMBOL_SZ{1'b0}}),
-                                             .load(symbol_clear),
-                                             .up(symbol_up), .Q(symbol_id), .*);
-
-  logic final_symbol;
-  assign final_symbol = symbol_id == SYMBOL_CT;
-
-  assign symbol_clear = slot_clear && final_symbol;
-  assign symbol_up = slot_clear && !final_symbol;
-
   logic         data_en;
   logic [N-1:0] data_D, data_Q;
   Register #(.WIDTH(N)) dataReg(.D(data), .en(data_en), .Q(data_Q), .*);
@@ -92,15 +69,19 @@ module Modulator
   logic valid_Q;
   Register #(.WIDTH(1)) validReg(.D(valid), .en(valid_en), .Q(valid_Q), .*);
 
-  assign data_en = symbol_clear,
-         avail = symbol_clear,
-         valid_en = symbol_clear;
-
   logic pulser_start, pulser_avail, pulser_out;
   Pulser #(.COUNT(PULSE_CT)) pulser(.start(pulser_start), .avail(pulser_avail),
                                     .pulse(pulser_out), .*);
 
-  assign pulser_start = (slot_ct == 0) && (data_Q == symbol_id);
+  logic last_symbol_slot;
+  logic slot_begin;
+  logic symbol_matches;
+  OppmCounter #(.L(L), .N(N)) oc (.data(data_Q), .start(1'b1), .*);
+
+  assign data_en = last_symbol_slot,
+         avail = last_symbol_slot,
+         valid_en = last_symbol_slot;
+  assign pulser_start = slot_begin && symbol_matches;
   assign pulse = pulser_out && valid_Q;
 endmodule: Modulator
 
@@ -203,3 +184,29 @@ module Encoder
     endcase
   end
 endmodule: Encoder
+
+//---- Decoder
+module Decoder
+// Decodes packets of data sent as OPPM pulses.
+// Data is received MSB-first.
+#(parameter PULSE_CT, // Pulse width in clock ticks
+            N_MOD,    // Modulation data size in bits
+            L,        // Time slot size in clock ticks
+            N_PKT,    // Data packet size in bits
+            PRE_CT    // Number of preamble symbols to transmit
+)
+ (input  logic             clk,   // Clock
+  input  logic             rst_n, // Asynchronous reset active low
+  output logic [N_PKT-1:0] data,  // Data packet to transmit
+  output logic             avail, // Data is available to be latched
+  input  logic             pulse, // Input pulse
+  input  logic             read   // Data is read
+);
+  logic is_edge;
+  EdgeDetector ed(.data(pulse), .*);
+
+  logic last_symbol_slot;
+  logic slot_begin;
+  logic symbol_matches;
+  OppmCounter #(.L(L), .N(N_MOD)) oc(.data(0), .start(is_edge), .*);
+endmodule: Decoder
