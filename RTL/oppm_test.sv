@@ -182,12 +182,17 @@ module Decoder_test;
   default clocking cb @(posedge clk);
     default input #1step output #2;
     output negedge rst_n;
+    // Encoding
     output data;
     output start;
-    output read;
     input  avail;
     input  pulse;
+    // Decoding
+    input  avail_rcv;
+    output read;
   endclocking: cb
+
+  localparam NUM_ITER = 2;
 
   initial begin
     rst_n = 1'b0;
@@ -197,7 +202,7 @@ module Decoder_test;
 
     ##1 cb.rst_n <= 1'b1;
 
-    repeat (2) begin
+    repeat (NUM_ITER) begin
       cb.data <= $urandom;
       cb.start <= 1'b1;
       @(negedge cb.avail);
@@ -212,5 +217,14 @@ module Decoder_test;
     end
 
     ##1 $finish;
+  end
+
+  initial begin
+    repeat (NUM_ITER) begin
+      @(posedge cb.avail_rcv);
+      cb.read <= 1'b1;
+      ##5;
+      cb.read <= 1'b0;
+    end
   end
 endmodule: Decoder_test
