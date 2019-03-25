@@ -31,11 +31,11 @@ module Register
 
 endmodule : Register
 
-//---- Shift Register
-// Stores a value in memory that can be shifted (PISO variant).
+//---- Shift Out Register
+// Stores a value in memory that can be "shifted out" (MSB first)
 // When shift is asserted, the stored value will be shifted by the width of the
 // output so that the new bits can be outputted.
-module ShiftRegister
+module ShiftOutRegister
   #(parameter INWIDTH = 32, OUTWIDTH = 8, DEFVAL = 0)
   (input  logic [INWIDTH-1:0]  D,
    input  logic                reload, shift, clk, rst_n,
@@ -51,7 +51,7 @@ module ShiftRegister
 
   assign Q = Q_internal[INWIDTH-1:INWIDTH-OUTWIDTH];
 
-endmodule : ShiftRegister
+endmodule : ShiftOutRegister
 
 //---- EdgeDetector
 // True if a rise edge occurs
@@ -69,12 +69,11 @@ endmodule : EdgeDetector
 
 module OppmCounter
   #(L, N)
-  (input  logic [N-1:0] data,
-   input  logic         start,
+  (input  logic         start,
    input  logic         clk, rst_n,
+   output logic [N-1:0] symbol_id,
    output logic         last_symbol_slot,
-   output logic         slot_begin,
-   output logic         symbol_matches);
+   output logic         slot_begin);
   logic start_Q;
   logic run;
   Register #(.WIDTH(1)) startReg(.D(run), .en(1'b1), .Q(start_Q), .*);
@@ -90,7 +89,6 @@ module OppmCounter
 
   localparam SYMBOL_CT = 2**N - 1;
   localparam SYMBOL_SZ = N;
-  logic [SYMBOL_SZ-1:0] symbol_id;
   logic                 symbol_clear, symbol_up;
   Counter #(.WIDTH(SYMBOL_SZ)) symbolCounter(.D({SYMBOL_SZ{1'b0}}),
                                              .load(symbol_clear),
@@ -104,5 +102,22 @@ module OppmCounter
 
   assign last_symbol_slot = symbol_clear;
   assign slot_begin = slot_ct == 0;
-  assign symbol_matches = data == symbol_id;
 endmodule : OppmCounter
+
+//---- Shift In Register
+// Stores a value in memory that can be shifted.
+// When shift is asserted, the stored value will be shifted by the width of the
+// input so that the new bits can be stored. There is no "overflow" checking.
+module ShiftInRegister
+  #(parameter INWIDTH = 8, OUTWIDTH = 32, DEFVAL = 0)
+  (input  logic [INWIDTH-1:0]  D,
+   input  logic                reload, shift, clk, rst_n,
+   output logic [OUTWIDTH-1:0] Q);
+
+  always_ff @(posedge clk, negedge rst_n) begin
+    if (~rst_n) Q <= DEFVAL;
+    else if (reload) Q <= {{OUTWIDTH-INWIDTH{1'b0}}, D};
+    else if (shift) Q <= (Q << INWIDTH) | D;
+  end
+
+endmodule : ShiftInRegister

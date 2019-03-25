@@ -193,6 +193,7 @@ module Decoder_test;
     rst_n = 1'b0;
     data = {N_MOD{1'b0}};
     start = 1'b0;
+    read = 1'b0;
 
     ##1 cb.rst_n <= 1'b1;
 

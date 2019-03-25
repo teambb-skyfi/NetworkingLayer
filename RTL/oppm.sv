@@ -73,15 +73,15 @@ module Modulator
   Pulser #(.COUNT(PULSE_CT)) pulser(.start(pulser_start), .avail(pulser_avail),
                                     .pulse(pulser_out), .*);
 
-  logic last_symbol_slot;
-  logic slot_begin;
-  logic symbol_matches;
-  OppmCounter #(.L(L), .N(N)) oc (.data(data_Q), .start(1'b1), .*);
+  logic         last_symbol_slot;
+  logic         slot_begin;
+  logic [N-1:0] symbol_id;
+  OppmCounter #(.L(L), .N(N)) oc (.start(1'b1), .*);
 
   assign data_en = last_symbol_slot,
          avail = last_symbol_slot,
          valid_en = last_symbol_slot;
-  assign pulser_start = slot_begin && symbol_matches;
+  assign pulser_start = slot_begin && (data_Q == symbol_id);
   assign pulse = pulser_out && valid_Q;
 endmodule: Modulator
 
@@ -117,7 +117,7 @@ module Encoder
 
   logic             data_reload, data_shift;
   logic [N_MOD-1:0] data_Q;
-  ShiftRegister #(.INWIDTH(N_PKT), .OUTWIDTH(N_MOD)) dataReg(.D(data),
+  ShiftOutRegister #(.INWIDTH(N_PKT), .OUTWIDTH(N_MOD)) dataReg(.D(data),
     .reload(data_reload), .shift(data_shift), .Q(data_Q), .*);
 
   localparam DATA_PULSE_CT = (N_PKT+N_MOD-1) / N_MOD; // Ceiling division
@@ -205,8 +205,94 @@ module Decoder
   logic is_edge;
   EdgeDetector ed(.data(pulse), .*);
 
-  logic last_symbol_slot;
-  logic slot_begin;
-  logic symbol_matches;
-  OppmCounter #(.L(L), .N(N_MOD)) oc(.data(0), .start(is_edge), .*);
+  logic             last_symbol_slot;
+  logic             slot_begin;
+  logic [N_MOD-1:0] symbol_id;
+  OppmCounter #(.L(L), .N(N_MOD)) oc(.start(is_edge), .*);
+
+  localparam PRE_CT_SZ = $clog2(PRE_CT+1);
+  logic [PRE_CT_SZ-1:0] count_pre;
+  logic                 clear_pre, up_pre;
+  Counter #(.WIDTH(PRE_CT_SZ)) preambleCounter(.D({PRE_CT_SZ{1'b0}}),
+                                               .load(clear_pre), .up(up_pre),
+                                               .Q(count_pre), .*);
+
+  localparam DATA_PULSE_CT = (N_PKT+N_MOD-1) / N_MOD; // Ceiling division
+  localparam DATA_PULSE_SZ = $clog2(DATA_PULSE_CT+1);
+  logic [DATA_PULSE_SZ-1:0] count_dp;
+  logic                     clear_dp, up_dp;
+  Counter #(.WIDTH(DATA_PULSE_SZ)) dataPulseCounter(.D({DATA_PULSE_SZ{1'b0}}),
+                                                    .load(clear_dp),
+                                                    .up(up_dp), .Q(count_dp),
+                                                    .*);
+
+  logic             data_reload, data_shift;
+  logic [N_MOD-1:0] data_D;
+  ShiftInRegister #(.INWIDTH(N_MOD), .OUTWIDTH(N_PKT)) dataReg(.D(data_D),
+    .reload(data_reload), .shift(data_shift), .Q(data), .*);
+
+  logic avail_D, data_ready, incoming;
+  Register #(.WIDTH(1)) availReg(.D(avail_D), .en(1'b1), .Q(avail), .*);
+  always_comb begin
+    unique case (avail)
+      0: begin
+        avail_D = data_ready;
+      end
+      1: begin
+        avail_D = !(read | incoming);
+      end
+    endcase
+  end
+
+  // State register
+  enum {WAIT, PREAM, DATA} s, ns;
+  always_ff @(posedge clk, negedge rst_n) begin
+    if (~rst_n)
+      s <= WAIT;
+    else
+      s <= ns;
+  end
+
+  // Output logic
+  always_comb begin
+    ns = s;
+    clear_pre = 1'b0;
+    up_pre = 1'b0;
+    clear_dp = 1'b0;
+    up_dp = 1'b0;
+    data_reload = 1'b0;
+    data_shift = 1'b0;
+    data_D = {N_MOD{1'b0}};
+
+    incoming = 1'b0;
+    data_ready = 1'b0;
+
+    unique case (s)
+      WAIT: begin
+        ns = (is_edge) ? PREAM : WAIT;
+        clear_pre = !is_edge;
+        up_pre = is_edge;
+        clear_dp = is_edge;
+
+        incoming = is_edge;
+      end
+      PREAM: begin
+        ns = is_edge & (count_pre >= PRE_CT) ? DATA : PREAM;
+        clear_pre = is_edge & (count_pre >= PRE_CT);
+        up_pre = is_edge & (count_pre < PRE_CT); //TODO Error if not @ 0
+
+        up_dp = is_edge & (count_pre >= PRE_CT);
+        data_reload = is_edge & (count_pre >= PRE_CT);
+        data_D = symbol_id;
+      end
+      DATA: begin
+        ns = count_dp >= DATA_PULSE_CT ? WAIT : DATA;
+        up_dp = is_edge;
+        data_shift = is_edge;
+        data_D = symbol_id;
+
+        data_ready = count_dp >= DATA_PULSE_CT;
+      end
+    endcase
+  end
 endmodule: Decoder
