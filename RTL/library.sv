@@ -53,25 +53,12 @@ module ShiftOutRegister
 
 endmodule : ShiftOutRegister
 
-//---- EdgeDetector
-// True if a rise edge occurs
-module EdgeDetector
-  (input  logic data,
-   input  logic clk, rst_n,
-   output logic is_edge);
-  logic data_last;
-  always_ff @(posedge clk, negedge rst_n) begin
-    if (~rst_n) data_last <= 1'b0;
-    else data_last <= data;
-  end
-  assign is_edge = (data == 1'b1) && (data_last == 1'b0);
-endmodule : EdgeDetector
-
 module OppmCounter
-  #(L, N)
+  #(L, N, L_SZ = $clog2(L+1))
   (input  logic         start,
    input  logic         clk, rst_n,
    output logic [N-1:0] symbol_id,
+	output logic [L_SZ-1:0] slot_ct,
    output logic         last_symbol_slot,
    output logic         slot_begin);
   logic start_Q;
@@ -79,8 +66,8 @@ module OppmCounter
   Register #(.WIDTH(1)) startReg(.D(run), .en(1'b1), .Q(start_Q), .*);
   assign run = start_Q | start;
 
-  localparam L_SZ = $clog2(L+1);
-  logic [L_SZ-1:0] slot_ct;
+  //localparam L_SZ = $clog2(L+1);
+  //logic [L_SZ-1:0] slot_ct;
   logic            slot_clear, slot_up;
   Counter #(.WIDTH(L_SZ)) slotCounter(.D({L_SZ{1'b0}}), .load(slot_clear),
                                       .up(slot_up), .Q(slot_ct), .*);
@@ -121,3 +108,48 @@ module ShiftInRegister
   end
 
 endmodule : ShiftInRegister
+
+//---- HextoSevenSegment
+module HextoSevenSegment (
+  input logic [3:0] hex,
+  output logic [6:0] segment);
+
+  always_comb begin
+    case(hex)
+      4'h0: segment = 7'b1000000;
+      4'h1: segment = 7'b1111001;
+      4'h2: segment = 7'b0100100;
+      4'h3: segment = 7'b0110000;
+      4'h4: segment = 7'b0011001;
+      4'h5: segment = 7'b0010010;
+      4'h6: segment = 7'b0000010;
+      4'h7: segment = 7'b1111000;
+      4'h8: segment = 7'b0000000;
+      4'h9: segment = 7'b0011000;
+      4'ha: segment = 7'b0001000;
+      4'hb: segment = 7'b0000011;
+      4'hc: segment = 7'b1000110;
+      4'hd: segment = 7'b0100001;
+      4'he: segment = 7'b0000110;
+      4'hf: segment = 7'b0001110;
+    endcase
+  end
+endmodule : HextoSevenSegment
+
+//---- EdgeDetector
+// True if a rise edge occurs
+module EdgeDetector
+  (input  logic data,
+   input  logic clk, rst_n,
+   output logic is_edge);
+//  always_ff @(posedge clk, negedge rst_n) begin
+//    if (~rst_n) data_last <= 1'b0;
+//    else data_last <= data;
+//  end
+//  logic [4:0] slow_clk;
+//  Counter #(.WIDTH(5)) slower(.D(0), .load(0), .up(1'b1), .Q(slow_clk), .*);
+  logic data_last;
+  ShiftInRegister #(.INWIDTH(1), .OUTWIDTH(1)) history(.D(data), .reload(1'b0),
+    .shift(1'b1), .clk, .rst_n, .Q(data_last));
+  assign is_edge = (data == 1'b1) && (data_last == 1'b0);
+endmodule : EdgeDetector

@@ -76,7 +76,7 @@ module Modulator
   logic         last_symbol_slot;
   logic         slot_begin;
   logic [N-1:0] symbol_id;
-  OppmCounter #(.L(L), .N(N)) oc (.start(1'b1), .*);
+  OppmCounter #(.L(L), .N(N)) oc (.start(1'b1), .slot_ct(), .*);
 
   assign data_en = last_symbol_slot,
          avail = last_symbol_slot,
@@ -208,6 +208,8 @@ module Decoder
   logic             last_symbol_slot;
   logic             slot_begin;
   logic [N_MOD-1:0] symbol_id;
+  localparam L_SZ = $clog2(L+1);
+  logic [L_SZ-1:0] slot_ct;
   OppmCounter #(.L(L), .N(N_MOD)) oc(.start(is_edge), .*);
 
   localparam PRE_CT_SZ = $clog2(PRE_CT+1);
@@ -283,13 +285,13 @@ module Decoder
 
         up_dp = is_edge & (count_pre >= PRE_CT);
         data_reload = is_edge & (count_pre >= PRE_CT);
-        data_D = symbol_id;
+        data_D = (slot_ct >= L/2) ? symbol_id + 1 : symbol_id;
       end
       DATA: begin
         ns = count_dp >= DATA_PULSE_CT ? WAIT : DATA;
         up_dp = is_edge;
         data_shift = is_edge;
-        data_D = symbol_id;
+        data_D = (slot_ct >= L/2) ? symbol_id + 1 : symbol_id;
 
         data_ready = count_dp >= DATA_PULSE_CT;
       end
