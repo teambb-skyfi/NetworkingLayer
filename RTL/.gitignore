@@ -13,3 +13,5 @@ simv
 *.vpd
 AN.DB/*
 *.tcl.old
+urgReport/*
+simv.vdb/*

@@ -8,33 +8,74 @@ module Pulser_test;
     forever #5 clk = ~clk;
   end
 
+  localparam COUNT = 50;
   logic rst_n;
   logic start;
   logic avail;
   logic pulse;
-  Pulser #(.COUNT(50)) dut(.*);
+  Pulser #(.COUNT(COUNT)) dut(.*);
 
   default clocking cb @(posedge clk);
-    default input #1step output #2;
-    output negedge rst_n;
-    output start;
+    default input #1step output negedge;
+    output rst_n;
+    inout  start;
     input  avail;
     input  pulse;
+
+    property avail_means_inactive;
+      avail |-> ~pulse;
+    endproperty
+
+    property correct_pulse;
+      avail & start |-> ~pulse ##1 pulse ##COUNT ~pulse;
+    endproperty
+
+    property avail_after_pulse;
+      pulse ##1 ~pulse |-> ##1 $rose(avail);
+    endproperty
+
+    property avail_ends;
+      avail & start |-> ##1 ~avail;
+    endproperty
   endclocking: cb
 
+  a1: assert property (cb.avail_means_inactive);
+  c1: cover property (cb.avail_means_inactive);
+
+  a2: assert property (cb.correct_pulse);
+  c2: cover property (cb.correct_pulse);
+
+  a3: assert property (cb.avail_after_pulse);
+  c3: cover property (cb.avail_after_pulse);
+
+  a4: assert property (cb.avail_ends);
+  c4: cover property (cb.avail_ends);
+
+  covergroup cg @(posedge clk);
+    option.at_least = 2;
+
+    pulser_count_p: coverpoint dut.count {
+      bins count_bins [] = {[0:COUNT]};
+    }
+    cross cb.start, cb.avail;
+    cross cb.start, cb.pulse;
+    cross cb.start, pulser_count_p;
+  endgroup: cg
+
+  localparam int SEED = 18500;
+  initial $srandom(SEED);
+
   initial begin
+    cg cg_inst = new;
+
     rst_n = 1'b0;
     start = 1'b0;
 
     ##1 cb.rst_n <= 1'b1;
-    ##1 cb.start <= 1'b1;
-    ##1 cb.start <= 1'b0;
-    @(negedge cb.pulse);
 
-    ##1 cb.start <= 1'b1;
-    @(negedge cb.pulse);
-
-    @(negedge cb.pulse);
+    while (cg_inst.get_coverage() < 99.0) begin
+      ##1 cb.start <= $urandom;
+    end
 
     ##1 $finish;
   end
