@@ -1,5 +1,14 @@
 `default_nettype none
 
+/*
+Pulser : Specification
+----------------------
+The Pulser will assert avail when it is ready to pulse. start may be asserted at
+any time. One cycle after start is correctly asserted, avail will be deasserted
+and pulse will be asserted for COUNT cycles. start will be ignored until avail
+is re-asserted. The Pulser is available the cycle after the pulse ends.
+*/
+
 // Pulser testbench
 module Pulser_test;
   logic clk;
@@ -77,6 +86,9 @@ module Pulser_test;
       ##1 cb.start <= $urandom;
     end
 
+    // Wait for last pulse to finish
+    cb.start <= 1'b0;
+    @(cb.avail);
     ##1 $finish;
   end
 endmodule: Pulser_test
