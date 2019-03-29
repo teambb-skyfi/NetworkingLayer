@@ -144,7 +144,7 @@ module Modulator
   output logic         pulse  // Output pulse
 );
   logic         data_en;
-  logic [N-1:0] data_D, data_Q;
+  logic [N-1:0] data_Q;
   Register #(.WIDTH(N)) dataReg(.D(data), .en(data_en), .clear(1'b0),
                                 .Q(data_Q), .*);
 
@@ -157,28 +157,34 @@ module Modulator
   Pulser #(.COUNT(PULSE_CT)) pulser(.start(pulser_start), .avail(pulser_avail),
                                     .pulse(pulser_out), .*);
 
+  localparam DELTA = 0; // near_begin outputs not used..
   localparam L_SZ = $clog2(L+1);
+  logic            run;
   logic [L_SZ-1:0] tick_ct;
   logic [N-1:0]    slot_idx;
   logic            final_tick;
   logic            final_slot;
-  OppmCounter #(.L(L), .N(N)) oc (.start(1'b1), .clear(1'b0), .*); //TODO Start?
+  logic            near_begin;
+  logic [N-1:0]    near_slot_idx;
+  OppmCounter #(.L(L), .N(N), .DELTA(0)) oc(.start(1'b1), .clear(1'b0), .*);
 
   always_comb begin
     // Available on the final slot of each symbol
-    data_en = final_slot;
-    avail = final_slot;
-    valid_en = final_slot;
+    data_en = final_slot & final_tick;
+    avail = final_slot & final_tick;
+    valid_en = final_slot & final_tick;
 
     pulser_start = (tick_ct == 0) && (data_Q == slot_idx);
     pulse = pulser_out && valid_Q;
   end
 endmodule: Modulator
 
-//---- Encoder
+/*
+Encoder : Specification
+-----------------------
+Data is sent MSB-first.
+*/
 module Encoder
-// Encodes packets of data in sequences of pulses.
-// Data is sent MSB-first.
 #(parameter PULSE_CT, // Pulse width in clock ticks
             N_MOD,    // Modulation data size in bits
             L,        // Time slot size in clock ticks
@@ -283,7 +289,8 @@ module Decoder
             N_MOD,    // Modulation data size in bits
             L,        // Time slot size in clock ticks
             N_PKT,    // Data packet size in bits
-            PRE_CT    // Number of preamble symbols to transmit
+            PRE_CT,   // Number of preamble symbols to transmit
+            DELTA     // Delta to be considered "in slot" in ticks
 )
  (input  logic             clk,   // Clock
   input  logic             rst_n, // Asynchronous reset active low
@@ -292,13 +299,21 @@ module Decoder
   input  logic             pulse, // Input pulse
   input  logic             read   // Data is read
 );
+  //TODO clear?
+
   logic is_edge;
   EdgeDetector ed(.data(pulse), .*);
 
-  logic             last_symbol_slot;
-  logic             slot_begin;
-  logic [N_MOD-1:0] symbol_id;
-  OppmCounter #(.L(L), .N(N_MOD)) oc(.start(is_edge), .*);
+  localparam L_SZ = $clog2(L+1);
+  logic             run;
+  logic [L_SZ-1:0]  tick_ct;
+  logic [N_MOD-1:0] slot_idx;
+  logic             final_tick;
+  logic             final_slot;
+  logic             near_begin;
+  logic [N_MOD-1:0] near_slot_idx;
+  OppmCounter #(.L(L), .N(N_MOD), .DELTA(DELTA)) oc(.start(is_edge),
+                                                    .clear(1'b0), .*);
 
   localparam PRE_CT_SZ = $clog2(PRE_CT+1);
   logic [PRE_CT_SZ-1:0] count_pre;
@@ -322,7 +337,8 @@ module Decoder
     .reload(data_reload), .shift(data_shift), .Q(data), .*);
 
   logic avail_D, data_ready, incoming;
-  Register #(.WIDTH(1)) availReg(.D(avail_D), .en(1'b1), .Q(avail), .*);
+  Register #(.WIDTH(1)) availReg(.D(avail_D), .en(1'b1), .clear(1'b0),
+                                 .Q(avail), .*);
   always_comb begin
     unique case (avail)
       0: begin
@@ -369,17 +385,17 @@ module Decoder
       PREAM: begin
         ns = is_edge & (count_pre >= PRE_CT) ? DATA : PREAM;
         clear_pre = is_edge & (count_pre >= PRE_CT);
-        up_pre = is_edge & (count_pre < PRE_CT); //TODO Error if not @ 0
+        up_pre = is_edge & (count_pre < PRE_CT); //TODO Error if not near 0
 
         up_dp = is_edge & (count_pre >= PRE_CT);
         data_reload = is_edge & (count_pre >= PRE_CT);
-        data_D = symbol_id;
+        data_D = near_slot_idx; //TODO Error if not near slot idx
       end
       DATA: begin
         ns = count_dp >= DATA_PULSE_CT ? WAIT : DATA;
         up_dp = is_edge;
         data_shift = is_edge;
-        data_D = symbol_id;
+        data_D = near_slot_idx;
 
         data_ready = count_dp >= DATA_PULSE_CT;
       end

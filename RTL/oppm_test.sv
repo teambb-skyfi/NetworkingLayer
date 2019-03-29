@@ -236,6 +236,7 @@ module Modulator_test;
 endmodule: Modulator_test
 
 // Encoder testbench
+//TODO Write a good testbench???
 module Encoder_test;
   logic clk;
   initial begin
@@ -294,6 +295,7 @@ module Encoder_test;
 endmodule: Encoder_test
 
 // Decoder testbench
+//TODO Write a good testbench???
 module Decoder_test;
   logic clk;
   initial begin
@@ -304,39 +306,50 @@ module Decoder_test;
   localparam int SEED = 18500;
   initial $srandom(SEED);
 
-  localparam PULSE_CT = 2;
+  localparam PULSE_CT = 7500;
   localparam N_MOD = 2;
-  localparam L = 4;
+  localparam L = 10000;
   localparam N_PKT = 8;
-  localparam PRE_CT = 3;
+  localparam PRE_CT = 4;
+  localparam DELTA = 1;
   logic             rst_n;
   logic [N_PKT-1:0] data;
   logic             start;
   logic             avail;
   logic             pulse;
+  //TODO Stop using
   Encoder #(.PULSE_CT(PULSE_CT), .N_MOD(N_MOD), .L(L), .N_PKT(N_PKT),
-    .PRE_CT(PRE_CT)) dut(.*);
+            .PRE_CT(PRE_CT)) dut(.*);
 
   logic [N_PKT-1:0] data_rcv;
   logic             avail_rcv;
   logic             read;
   Decoder #(.PULSE_CT(PULSE_CT), .N_MOD(N_MOD), .L(L), .N_PKT(N_PKT),
-    .PRE_CT(PRE_CT)) dut2(.data(data_rcv), .avail(avail_rcv), .*);
+            .PRE_CT(PRE_CT), .DELTA(DELTA)) dut2(.data(data_rcv),
+                                                 .avail(avail_rcv), .*);
 
   default clocking cb @(posedge clk);
-    default input #1step output #2;
-    output negedge rst_n;
+    default input #1step output negedge;
+    output rst_n;
     // Encoding
-    output data;
-    output start;
+    inout  data;
+    inout  start;
     input  avail;
     input  pulse;
     // Decoding
     input  avail_rcv;
     output read;
+
+    property encode_to_decode_basic;
+      logic [N_PKT-1:0] e_data;
+      (start & avail, e_data = data) |-> ~avail_rcv [*0:$] ##1 avail_rcv & (data_rcv == e_data);
+    endproperty
   endclocking: cb
 
-  localparam NUM_ITER = 2;
+  a1: assert property(cb.encode_to_decode_basic);
+  c1: cover property(cb.encode_to_decode_basic);
+
+  localparam NUM_ITER = 10;
 
   initial begin
     rst_n = 1'b0;
