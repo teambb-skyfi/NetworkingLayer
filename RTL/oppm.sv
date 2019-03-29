@@ -1,9 +1,15 @@
 `default_nettype none
 
-//---- Pulser
-// Drive a pulse of defined length
+/*
+Pulser : Specification
+----------------------
+The Pulser will assert avail when it is ready to pulse. start may be asserted at
+any time. One cycle after start is correctly asserted, avail will be deasserted
+and pulse will be asserted for COUNT cycles. start will be ignored until avail
+is re-asserted. The Pulser is available the cycle after the pulse ends.
+*/
 module Pulser
-#(parameter COUNT     // Pulse width in clock ticks
+#(parameter COUNT     // Pulse width in ticks
 )
  (input  logic clk,   // Clock
   input  logic rst_n, // Asynchronous reset active low
@@ -48,7 +54,83 @@ module Pulser
   end
 endmodule: Pulser
 
-//---- Modulator
+/*
+OppmCounter : Specification
+---------------------------
+Note that the OppmCounter starts counting ticks in the SAME clock cycle that
+start is asserted!
+
+When cleared, the tick counts and slot indices are reset to 0.
+
+start & clear is undefined behavior
+*/
+module OppmCounter
+#(parameter N,                 // Data size in bits
+            L,                 // Time slot size in ticks
+            DELTA,             // Delta to be considered "in slot" in ticks
+            L_SZ = $clog2(L+1) // Tick ct size in bits
+)
+ (input  logic            clk,          // Clock
+  input  logic            rst_n,        // Asynchronous reset active low
+  input  logic            start,        // Start counting
+  input  logic            clear,        // Synchronous reset
+  output logic            run,          // Is running
+  output logic [L_SZ-1:0] tick_ct,      // Tick count
+  output logic [N-1:0]    slot_idx,     // Value of current slot
+  output logic            final_tick,   // Is on final tick
+  output logic            final_slot,   // Is on final slot
+  output logic            near_begin,   // Are we near slot beginning
+  output logic [N-1:0]    near_slot_idx // Slot we are near beginning of
+);
+  // Attempt at precondition
+  initial assert (DELTA < L/2) else $fatal("Invalid DELTA in %m");
+
+  localparam LAST_SLOT_IDX = 2**N - 1;
+  localparam LAST_TICK_CT = L - 1;
+
+  // Once initiated, keep going (no need to hold start for more than one cycle)
+  logic start_Q;
+  Register #(.WIDTH(1)) startReg(.D(run), .en(1'b1), .Q(start_Q), .*);
+  assign run = start_Q | start;
+
+  // Count how wide every tick is (in clock cycles)
+  logic            tick_clear, tick_up;
+  Counter #(.WIDTH(L_SZ)) slotTickCtr(.D({L_SZ{1'b0}}), .load(tick_clear),
+                                      .up(tick_up), .Q(tick_ct), .*);
+  always_comb begin
+    final_tick = tick_ct == LAST_TICK_CT;
+    tick_clear = final_tick | ~run | clear;
+    tick_up = ~final_tick & run & ~clear;
+  end
+
+  // Iterate through slot values
+  logic idx_clear, idx_up;
+  Counter #(.WIDTH(N)) slotIdxCtr(.D({N{1'b0}}), .load(idx_clear), .up(idx_up),
+                                  .Q(slot_idx), .*);
+  always_comb begin
+    final_slot = slot_idx == LAST_SLOT_IDX;
+    idx_clear = (final_tick & final_slot) | ~run | clear;
+    idx_up = (final_tick & ~final_slot) & run & ~clear;
+  end
+
+  // Slot beginning calculations
+  logic [N-1:0] next_idx;
+  logic         at_beginning, at_end;
+  always_comb begin
+    at_beginning = tick_ct <= DELTA;
+    at_end = tick_ct >= (LAST_TICK_CT - DELTA + 1);
+    near_begin = at_beginning | at_end;
+
+    // Yes, this is essentially slotIdxCtr...
+    next_idx = final_slot ? {N{1'b0}} : slot_idx + 1;
+    near_slot_idx = at_end ? next_idx : slot_idx;
+  end
+endmodule: OppmCounter
+
+/*
+Modulator : Specification
+-------------------------
+*/
 module Modulator
 #(parameter PULSE_CT, // Pulse width in clock ticks
             N,        // Data size in bits
@@ -63,26 +145,34 @@ module Modulator
 );
   logic         data_en;
   logic [N-1:0] data_D, data_Q;
-  Register #(.WIDTH(N)) dataReg(.D(data), .en(data_en), .Q(data_Q), .*);
+  Register #(.WIDTH(N)) dataReg(.D(data), .en(data_en), .clear(1'b0),
+                                .Q(data_Q), .*);
 
   logic valid_en;
   logic valid_Q;
-  Register #(.WIDTH(1)) validReg(.D(valid), .en(valid_en), .Q(valid_Q), .*);
+  Register #(.WIDTH(1)) validReg(.D(valid), .en(valid_en), .clear(1'b0),
+                                 .Q(valid_Q), .*);
 
   logic pulser_start, pulser_avail, pulser_out;
   Pulser #(.COUNT(PULSE_CT)) pulser(.start(pulser_start), .avail(pulser_avail),
                                     .pulse(pulser_out), .*);
 
-  logic         last_symbol_slot;
-  logic         slot_begin;
-  logic [N-1:0] symbol_id;
-  OppmCounter #(.L(L), .N(N)) oc (.start(1'b1), .*);
+  localparam L_SZ = $clog2(L+1);
+  logic [L_SZ-1:0] tick_ct;
+  logic [N-1:0]    slot_idx;
+  logic            final_tick;
+  logic            final_slot;
+  OppmCounter #(.L(L), .N(N)) oc (.start(1'b1), .clear(1'b0), .*); //TODO Start?
 
-  assign data_en = last_symbol_slot,
-         avail = last_symbol_slot,
-         valid_en = last_symbol_slot;
-  assign pulser_start = slot_begin && (data_Q == symbol_id);
-  assign pulse = pulser_out && valid_Q;
+  always_comb begin
+    // Available on the final slot of each symbol
+    data_en = final_slot;
+    avail = final_slot;
+    valid_en = final_slot;
+
+    pulser_start = (tick_ct == 0) && (data_Q == slot_idx);
+    pulse = pulser_out && valid_Q;
+  end
 endmodule: Modulator
 
 //---- Encoder
