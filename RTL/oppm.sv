@@ -305,6 +305,8 @@ module Decoder
   EdgeDetector ed(.data(pulse), .*);
 
   localparam L_SZ = $clog2(L+1);
+  logic             start_oc;
+  logic             clear_oc;
   logic             run;
   logic [L_SZ-1:0]  tick_ct;
   logic [N_MOD-1:0] slot_idx;
@@ -312,8 +314,8 @@ module Decoder
   logic             final_slot;
   logic             near_begin;
   logic [N_MOD-1:0] near_slot_idx;
-  OppmCounter #(.L(L), .N(N_MOD), .DELTA(DELTA)) oc(.start(is_edge),
-                                                    .clear(1'b0), .*);
+  OppmCounter #(.L(L), .N(N_MOD), .DELTA(DELTA)) oc(.start(start_oc),
+                                                    .clear(clear_oc), .*);
 
   localparam PRE_CT_SZ = $clog2(PRE_CT+1);
   logic [PRE_CT_SZ-1:0] count_pre;
@@ -350,8 +352,12 @@ module Decoder
     endcase
   end
 
+  logic cp, cp_D, cp_Q, clear_cp;
+  Register #(.WIDTH(1)) consec_pulse_reg(.D(cp_D), .Q(cp_Q), .clear(clear_cp), .en(1'b1), .*);
+  assign cp_D = cp | cp_Q;
+
   // State register
-  enum {WAIT, PREAM, DATA} s, ns;
+  enum {WAIT=0, PREAM=1, DATA=2, ERR0=3, ERR1=4, ERR2=5, ERR3=6} s, ns;
   always_ff @(posedge clk, negedge rst_n) begin
     if (~rst_n)
       s <= WAIT;
@@ -362,42 +368,145 @@ module Decoder
   // Output logic
   always_comb begin
     ns = s;
+
+    start_oc = 1'b0;
+    clear_oc = 1'b0;
+
     clear_pre = 1'b0;
     up_pre = 1'b0;
+
     clear_dp = 1'b0;
     up_dp = 1'b0;
+
     data_reload = 1'b0;
     data_shift = 1'b0;
     data_D = {N_MOD{1'b0}};
+
+    cp = 1'b0;
+    clear_cp = 1'b0;
 
     incoming = 1'b0;
     data_ready = 1'b0;
 
     unique case (s)
       WAIT: begin
-        ns = (is_edge) ? PREAM : WAIT;
-        clear_pre = !is_edge;
-        up_pre = is_edge;
-        clear_dp = is_edge;
+        clear_dp = 1'b1;
 
-        incoming = is_edge;
+        if (is_edge) begin
+          ns = PREAM;
+          start_oc = 1'b1;
+          up_pre = 1'b1;;
+          cp = 1'b1;
+          incoming = 1'b1;;
+        end else begin
+          clear_oc = 1'b1; //TODO Modify for multi-rx?
+          clear_pre = 1'b1;
+        end
       end
       PREAM: begin
-        ns = is_edge & (count_pre >= PRE_CT) ? DATA : PREAM;
-        clear_pre = is_edge & (count_pre >= PRE_CT);
-        up_pre = is_edge & (count_pre < PRE_CT); //TODO Error if not near 0
-
-        up_dp = is_edge & (count_pre >= PRE_CT);
-        data_reload = is_edge & (count_pre >= PRE_CT);
-        data_D = near_slot_idx; //TODO Error if not near slot idx
-      end
-      DATA: begin
-        ns = count_dp >= DATA_PULSE_CT ? WAIT : DATA;
-        up_dp = is_edge;
-        data_shift = is_edge;
         data_D = near_slot_idx;
 
-        data_ready = count_dp >= DATA_PULSE_CT;
+        cp = is_edge;
+
+        if (is_edge & near_begin) begin
+          if (count_pre >= PRE_CT) begin
+            // Data pulse
+            ns = DATA;
+
+            clear_pre = 1'b1;
+
+            up_dp = 1'b1;
+            data_reload = 1'b1;
+          end else if (near_slot_idx == {N_MOD{1'b0}}) begin
+            // Correct preamble pulse
+            ns = PREAM;
+
+            up_pre = 1'b1;
+          end else begin
+            // Erroneous pulse
+            ns = ERR0;
+
+            // Clear all counters
+            clear_oc = 1'b1; //TODO Modify for multi-rx?
+            clear_pre = 1'b1;
+            clear_dp = 1'b1;
+          end
+        end else if (is_edge) begin
+          // Edge detected outside acceptable bounds
+          ns = ERR1;
+
+          // Clear all counters
+          clear_oc = 1'b1; //TODO Modify for multi-rx?
+          clear_pre = 1'b1;
+          clear_dp = 1'b1;
+        end else if (final_tick & final_slot) begin
+          if (cp_Q)
+            clear_cp = 1'b1;
+          else
+            ns = ERR3;
+        end
+      end
+      DATA: begin
+        data_D = near_slot_idx;
+
+        cp = is_edge;
+
+        if (is_edge & near_begin) begin
+          data_shift = 1'b1;
+
+          if (count_dp == DATA_PULSE_CT-1) begin
+            ns = WAIT;
+
+            data_ready = 1'b1;
+            clear_oc = 1'b1; //TODO Modify for multi-rx?
+            clear_pre = 1'b1;
+            clear_dp = 1'b1;
+          end else begin
+            up_dp = 1'b1;
+          end
+        end else if (is_edge) begin
+          // Edge detected outside acceptable bounds
+          ns = ERR2;
+
+          // Clear all counters
+          clear_oc = 1'b1; //TODO Modify for multi-rx?
+          clear_pre = 1'b1;
+          clear_dp = 1'b1;
+        end else if (final_tick & final_slot) begin
+          if (cp_Q)
+            clear_cp = 1'b1;
+          else
+            ns = ERR3;
+        end
+      end
+
+      ERR0: begin
+        ns = WAIT;
+        data_reload = 1'b1;
+        clear_oc = 1'b1; //TODO Modify for multi-rx?
+        clear_pre = 1'b1;
+        clear_dp = 1'b1;
+      end
+      ERR1: begin
+        ns = WAIT;
+        data_reload = 1'b1;
+        clear_oc = 1'b1; //TODO Modify for multi-rx?
+        clear_pre = 1'b1;
+        clear_dp = 1'b1;
+      end
+      ERR2: begin
+        ns = WAIT;
+        data_reload = 1'b1;
+        clear_oc = 1'b1; //TODO Modify for multi-rx?
+        clear_pre = 1'b1;
+        clear_dp = 1'b1;
+      end
+      ERR3: begin
+        ns = WAIT;
+        data_reload = 1'b1;
+        clear_oc = 1'b1; //TODO Modify for multi-rx?
+        clear_pre = 1'b1;
+        clear_dp = 1'b1;
       end
     endcase
   end

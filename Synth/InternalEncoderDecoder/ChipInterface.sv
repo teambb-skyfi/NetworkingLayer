@@ -6,8 +6,8 @@ module ChipInterface(
   input  logic        CLOCK_50,
   input  logic [ 9:0] SW,
   input  logic [ 2:0] KEY,
-  //output logic [35:0] GPIO_0,
-  //input  logic [35:0] GPIO_1,
+  output logic [35:0] GPIO_0,
+  input  logic [35:0] GPIO_1,
   output logic [ 9:0] LEDR,
   output logic [ 6:0] HEX5, HEX4, HEX1, HEX0);
 
@@ -34,9 +34,9 @@ module ChipInterface(
   logic [N_PKT-1:0] data_rcv, data_rcv_Q;
   logic             avail_rcv;
   logic             read;
-  //logic             pulse;
+  logic             pulse_rcv;
   Decoder #(.PULSE_CT(PULSE_CT), .N_MOD(N_MOD), .L(L), .N_PKT(N_PKT),
-    .PRE_CT(PRE_CT), .DELTA(DELTA)) dut2(.data(data_rcv), .avail(avail_rcv),
+    .PRE_CT(PRE_CT), .DELTA(DELTA)) dut2(.data(data_rcv), .avail(avail_rcv), .pulse(pulse_rcv),
                                          .*);
 
   HextoSevenSegment upper(data[7:4], HEX1);
@@ -52,9 +52,13 @@ module ChipInterface(
     read = 1'b0; // No "read"
 
     // Status
+    LEDR[6] = pulse_rcv;
     LEDR[7] = avail_rcv;
     LEDR[8] = avail;
     LEDR[9] = pulse;
+    
+    GPIO_0[5] = pulse;
+    pulse_rcv = GPIO_1[6];
   end
 
   // State register
@@ -69,22 +73,40 @@ module ChipInterface(
   logic send_n;
   assign send_n = KEY[1];
 
+  // Rate limiter
+  localparam LIM_SZ = 32, LIMIT = 500000;
+  logic              load_lim;
+  logic [LIM_SZ-1:0] lim_Q;
+  Counter #(.WIDTH(LIM_SZ)) limiter(.D(0), .load(load_lim), .up(1'b1), .Q(lim_Q), .*);
+
   // State logic
   always_comb begin
     ns = s;
-    start = 1'b1;
-   
-//   unique case (s)
-//    WAIT: begin
-//      ns = (avail) ? READY : WAIT;
-//    end
-//    READY: begin
-//      ns = (!send_n) ? SENT : READY;
-//      start = !send_n;
-//    end
-//    SENT: begin
-//      ns = (!send_n) ? SENT : WAIT;
-//    end
-//   endcase
+    load_lim = 1'b1;
+
+    if (SW[9]) begin
+      // Button mode
+      start = 1'b0;
+       
+      unique case (s)
+       WAIT: begin
+         ns = (avail) ? READY : WAIT;
+       end
+       READY: begin
+         ns = (!send_n) ? SENT : READY;
+         start = !send_n;
+       end
+       SENT: begin
+         ns = (!send_n) ? SENT : WAIT;
+       end
+      endcase
+    end else begin
+      // Continuous mode
+      load_lim = ~avail;
+      start = 1'b0;
+
+      if (lim_Q >= LIMIT)
+        start = 1'b1;
+    end
   end
 endmodule: ChipInterface
