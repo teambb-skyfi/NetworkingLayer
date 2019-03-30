@@ -22,7 +22,7 @@ module ChipInterface(
   localparam L = 10000;
   localparam N_PKT = 8;
   localparam PRE_CT = 4;
-  localparam DELTA = 2000; //TODO Could be reduced; likely not issue anyway
+  localparam DELTA = 4000; //TODO Could be reduced; likely not issue anyway
 
   logic [N_PKT-1:0] data;
   logic             start;
@@ -74,7 +74,7 @@ module ChipInterface(
   assign send_n = KEY[1];
 
   // Rate limiter
-  localparam LIM_SZ = 32, LIMIT = 500000;
+  localparam LIM_SZ = 32, LIMIT = 500_000;
   logic              load_lim;
   logic [LIM_SZ-1:0] lim_Q;
   Counter #(.WIDTH(LIM_SZ)) limiter(.D(0), .load(load_lim), .up(1'b1), .Q(lim_Q), .*);

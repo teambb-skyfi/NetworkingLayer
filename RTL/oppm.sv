@@ -70,17 +70,19 @@ module OppmCounter
             DELTA,             // Delta to be considered "in slot" in ticks
             L_SZ = $clog2(L+1) // Tick ct size in bits
 )
- (input  logic            clk,          // Clock
-  input  logic            rst_n,        // Asynchronous reset active low
-  input  logic            start,        // Start counting
-  input  logic            clear,        // Synchronous reset
-  output logic            run,          // Is running
-  output logic [L_SZ-1:0] tick_ct,      // Tick count
-  output logic [N-1:0]    slot_idx,     // Value of current slot
-  output logic            final_tick,   // Is on final tick
-  output logic            final_slot,   // Is on final slot
-  output logic            near_begin,   // Are we near slot beginning
-  output logic [N-1:0]    near_slot_idx // Slot we are near beginning of
+ (input  logic            clk,             // Clock
+  input  logic            rst_n,           // Asynchronous reset active low
+  input  logic            start,           // Start counting
+  input  logic            clear,           // Synchronous reset
+  output logic            run,             // Is running
+  output logic [L_SZ-1:0] tick_ct,         // Tick count
+  output logic [N-1:0]    slot_idx,        // Value of current slot
+  output logic            final_tick,      // Is on final tick
+  output logic            final_slot,      // Is on final slot
+  output logic            near_begin,      // Are we near slot beginning
+  output logic [N-1:0]    near_slot_idx,   // Slot we are near beginning of
+  output logic            final_near_tick, // Is on final near tick
+  output logic            final_near_slot  // Is on final near slot
 );
   // Attempt at precondition
   initial assert (DELTA < L/2) else $fatal("Invalid DELTA in %m");
@@ -124,6 +126,9 @@ module OppmCounter
     // Yes, this is essentially slotIdxCtr...
     next_idx = final_slot ? {N{1'b0}} : slot_idx + 1;
     near_slot_idx = at_end ? next_idx : slot_idx;
+
+    final_near_slot = near_slot_idx == LAST_SLOT_IDX;
+    final_near_tick = tick_ct == (LAST_TICK_CT - DELTA);
   end
 endmodule: OppmCounter
 
@@ -166,6 +171,8 @@ module Modulator
   logic            final_slot;
   logic            near_begin;
   logic [N-1:0]    near_slot_idx;
+  logic            final_near_tick;
+  logic            final_near_slot;
   OppmCounter #(.L(L), .N(N), .DELTA(0)) oc(.start(1'b1), .clear(1'b0), .*);
 
   always_comb begin
@@ -281,6 +288,24 @@ module Encoder
   end
 endmodule: Encoder
 
+//outputs a 1 on filtered pulse only if PASTCOUNT
+// number of previos values were 1.
+module digitalFilter #(parameter HISTORY_SIZE=100)(
+  input logic clk, 
+  input logic rst_n,
+  input logic pulse,
+  output logic filteredPulse);
+
+
+
+  logic [HISTORY_SIZE-1:0] history;
+  ShiftInRegister #(.INWIDTH(1), .OUTWIDTH(HISTORY_SIZE),.DEFVAL(0)) 
+    sr0(.clk, .rst_n, .shift(1), .reload(0), .D(pulse), .Q(history)); 
+  
+  assign filteredPulse = ((history == {HISTORY_SIZE{1'b1}}) && pulse) ? 1'b1 : 1'b0;
+
+endmodule: digitalFilter
+
 //---- Decoder
 module Decoder
 // Decodes packets of data sent as OPPM pulses.
@@ -299,10 +324,11 @@ module Decoder
   input  logic             pulse, // Input pulse
   input  logic             read   // Data is read
 );
-  //TODO clear?
-
+  logic filteredPulse;
+  digitalFilter #(.HISTORY_SIZE(50))(.clk, .rst_n, .pulse, .filteredPulse);
+  
   logic is_edge;
-  EdgeDetector ed(.data(pulse), .*);
+  EdgeDetector ed(.data(filteredPulse), .*);
 
   localparam L_SZ = $clog2(L+1);
   logic             start_oc;
@@ -314,6 +340,8 @@ module Decoder
   logic             final_slot;
   logic             near_begin;
   logic [N_MOD-1:0] near_slot_idx;
+  logic            final_near_tick;
+  logic            final_near_slot;
   OppmCounter #(.L(L), .N(N_MOD), .DELTA(DELTA)) oc(.start(start_oc),
                                                     .clear(clear_oc), .*);
 
@@ -356,8 +384,10 @@ module Decoder
   Register #(.WIDTH(1)) consec_pulse_reg(.D(cp_D), .Q(cp_Q), .clear(clear_cp), .en(1'b1), .*);
   assign cp_D = cp | cp_Q;
 
+  logic check_for_missing;
+
   // State register
-  enum {WAIT=0, PREAM=1, DATA=2, ERR0=3, ERR1=4, ERR2=5, ERR3=6} s, ns;
+  enum {WAIT=0, PREAM=1, DATA=2, ERR0=4, ERR1=5, ERR2=6, ERR3=7} s, ns;
   always_ff @(posedge clk, negedge rst_n) begin
     if (~rst_n)
       s <= WAIT;
@@ -384,10 +414,12 @@ module Decoder
 
     cp = 1'b0;
     clear_cp = 1'b0;
+    check_for_missing = final_near_tick & final_near_slot;
 
     incoming = 1'b0;
     data_ready = 1'b0;
 
+    //TODO Logic to handle more than one pulse in a symbol (according to cp)
     unique case (s)
       WAIT: begin
         clear_dp = 1'b1;
@@ -395,9 +427,10 @@ module Decoder
         if (is_edge) begin
           ns = PREAM;
           start_oc = 1'b1;
-          up_pre = 1'b1;;
+          up_pre = 1'b1;
+          data_reload = 1'b1;
           cp = 1'b1;
-          incoming = 1'b1;;
+          incoming = 1'b1;
         end else begin
           clear_oc = 1'b1; //TODO Modify for multi-rx?
           clear_pre = 1'b1;
@@ -439,7 +472,7 @@ module Decoder
           clear_oc = 1'b1; //TODO Modify for multi-rx?
           clear_pre = 1'b1;
           clear_dp = 1'b1;
-        end else if (final_tick & final_slot) begin
+        end else if (check_for_missing) begin
           if (cp_Q)
             clear_cp = 1'b1;
           else
@@ -472,7 +505,7 @@ module Decoder
           clear_oc = 1'b1; //TODO Modify for multi-rx?
           clear_pre = 1'b1;
           clear_dp = 1'b1;
-        end else if (final_tick & final_slot) begin
+        end else if (check_for_missing) begin
           if (cp_Q)
             clear_cp = 1'b1;
           else
