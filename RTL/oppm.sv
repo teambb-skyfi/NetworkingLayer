@@ -319,10 +319,11 @@ module Decoder
 )
  (input  logic             clk,   // Clock
   input  logic             rst_n, // Asynchronous reset active low
+  input  logic             pulse, // Input pulse
+  input  logic             read,  // Data is read
   output logic [N_PKT-1:0] data,  // Data packet to transmit
   output logic             avail, // Data is available to be latched
-  input  logic             pulse, // Input pulse
-  input  logic             read   // Data is read
+  output logic             error  // Error has happened
 );
   logic filteredPulse;
   digitalFilter #(.HISTORY_SIZE(50))(.clk, .rst_n, .pulse, .filteredPulse);
@@ -379,6 +380,19 @@ module Decoder
       end
     endcase
   end
+  logic error_D, error_happened;
+  Register #(.WIDTH(1)) errorReg(.D(error_D), .en(1'b1), .clear(1'b0),
+                                 .Q(error), .*);
+  always_comb begin
+    unique case (error)
+      0: begin
+        error_D = error_happened;
+      end
+      1: begin
+        error_D = !(read | incoming);
+      end
+    endcase
+  end
 
   logic cp, cp_D, cp_Q, clear_cp;
   Register #(.WIDTH(1)) consec_pulse_reg(.D(cp_D), .Q(cp_Q), .clear(clear_cp), .en(1'b1), .*);
@@ -418,6 +432,7 @@ module Decoder
 
     incoming = 1'b0;
     data_ready = 1'b0;
+    error_happened = 1'b0;
 
     //TODO Logic to handle more than one pulse in a symbol (according to cp)
     unique case (s)
@@ -513,29 +528,9 @@ module Decoder
         end
       end
 
-      ERR0: begin
+      ERR0, ERR1, ERR2, ERR3: begin
         ns = WAIT;
-        data_reload = 1'b1;
-        clear_oc = 1'b1; //TODO Modify for multi-rx?
-        clear_pre = 1'b1;
-        clear_dp = 1'b1;
-      end
-      ERR1: begin
-        ns = WAIT;
-        data_reload = 1'b1;
-        clear_oc = 1'b1; //TODO Modify for multi-rx?
-        clear_pre = 1'b1;
-        clear_dp = 1'b1;
-      end
-      ERR2: begin
-        ns = WAIT;
-        data_reload = 1'b1;
-        clear_oc = 1'b1; //TODO Modify for multi-rx?
-        clear_pre = 1'b1;
-        clear_dp = 1'b1;
-      end
-      ERR3: begin
-        ns = WAIT;
+        error_happened = 1'b1;
         data_reload = 1'b1;
         clear_oc = 1'b1; //TODO Modify for multi-rx?
         clear_pre = 1'b1;

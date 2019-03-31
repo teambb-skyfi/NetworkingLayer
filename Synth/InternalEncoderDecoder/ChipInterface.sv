@@ -19,7 +19,7 @@ module ChipInterface(
   
   localparam PULSE_CT = 7500;
   localparam N_MOD = 2;
-  localparam L = 10000;
+  localparam L = 15000;
   localparam N_PKT = 8;
   localparam PRE_CT = 4;
   localparam DELTA = 4000; //TODO Could be reduced; likely not issue anyway
@@ -35,6 +35,7 @@ module ChipInterface(
   logic             avail_rcv;
   logic             read;
   logic             pulse_rcv;
+  logic             error;
   Decoder #(.PULSE_CT(PULSE_CT), .N_MOD(N_MOD), .L(L), .N_PKT(N_PKT),
     .PRE_CT(PRE_CT), .DELTA(DELTA)) dut2(.data(data_rcv), .avail(avail_rcv), .pulse(pulse_rcv),
                                          .*);
@@ -49,13 +50,15 @@ module ChipInterface(
   
   always_comb begin
     data = SW[N_PKT-1:0];
-    read = 1'b0; // No "read"
+    read = 1'b1; // Always read
 
     // Status
-    LEDR[6] = pulse_rcv;
-    LEDR[7] = avail_rcv;
-    LEDR[8] = avail;
-    LEDR[9] = pulse;
+    LEDR[0] = pulse;
+    LEDR[1] = avail;
+
+    LEDR[7] = pulse_rcv;
+    LEDR[8] = avail_rcv;
+    LEDR[9] = error;
     
     GPIO_0[5] = pulse;
     pulse_rcv = GPIO_1[6];
@@ -109,4 +112,8 @@ module ChipInterface(
         start = 1'b1;
     end
   end
+
+  logic [31:0] avail_ct, error_ct;
+  Counter #(.WIDTH(32)) availCtr(.D(32'd0), .load(1'b0), .up(avail_rcv), .Q(avail_ct), .*);
+  Counter #(.WIDTH(32)) errorCtr(.D(32'd0), .load(1'b0), .up(error),     .Q(error_ct), .*);
 endmodule: ChipInterface
