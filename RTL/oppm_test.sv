@@ -184,12 +184,13 @@ module OppmCounter_test;
 endmodule: OppmCounter_test
 
 // Modulator testbench
-//TODO Write a good testbench???
 module Modulator_test;
+  localparam CLK_T = 10; // Must be even
+
   logic clk;
   initial begin
     clk = 1'b1;
-    forever #5 clk = ~clk;
+    forever #(CLK_T >> 1) clk = ~clk;
   end
 
   localparam int SEED = 18500;
@@ -205,15 +206,57 @@ module Modulator_test;
   logic         pulse;
   Modulator #(.PULSE_CT(PULSE_CT), .N(N), .L(L)) dut(.*);
 
+  // Parameters for validation
+  localparam SLOTS_PER_SYMBOL = 2**N;
+  localparam TICKS_PER_SYMBOL = SLOTS_PER_SYMBOL * L;
+
+  function int elapsed_ticks(int t_s, t_e);
+    return (t_e - t_s) / CLK_T;
+  endfunction: elapsed_ticks
+
   default clocking cb @(posedge clk);
     default input #1step output negedge;
     output rst_n;
-    output data;
-    output valid;
+    inout  data;
+    inout  valid;
     input  avail;
     input  pulse;
+
+    property not_valid_means_no_pulse;
+      $fell(avail) & ~$past(valid) |-> ~pulse throughout (~avail)[*0:$] ##1 avail;
+    endproperty
+
+    property correct_pulse_width;
+      $rose(pulse) |-> ##PULSE_CT ~pulse;
+    endproperty
+
+    property pulse_at_correct_time;
+      logic [N-1:0] pdata;
+      int t_s;
+      (avail & valid, pdata = data, t_s = $time) |-> ##1
+      ~pulse[*0:$] ##1 pulse ##0 (pdata == elapsed_ticks(t_s, $time) / L);
+    endproperty
   endclocking: cb
 
+  a1: assert property (cb.not_valid_means_no_pulse);
+  c1: cover property (cb.not_valid_means_no_pulse);
+
+  a2: assert property (cb.correct_pulse_width);
+  c2: cover property (cb.correct_pulse_width);
+
+  a3: assert property (cb.pulse_at_correct_time);
+  c3: cover property (cb.pulse_at_correct_time);
+
+  class RandomData;
+  rand logic [N-1:0] data;
+  rand logic         valid;
+
+  constraint valid_dist {
+    valid dist {1 := 4, 0 := 1};
+  }
+  endclass: RandomData
+
+  RandomData rd;
   initial begin
     rst_n = 1'b0;
     data = 2'b1;
@@ -221,13 +264,13 @@ module Modulator_test;
 
     ##1 cb.rst_n <= 1'b1;
 
-    repeat (10) begin
+    rd = new;
+    //TODO Should use covergroup...
+    repeat (50) begin
       @(posedge cb.avail);
-      cb.data <= $urandom;
-      randcase
-        4: cb.valid <= 1;
-        1: cb.valid <= 0;
-      endcase
+      rd.randomize();
+      cb.data <= rd.data;
+      cb.valid <= rd.valid;
     end
 
     @(posedge cb.avail);
@@ -236,7 +279,6 @@ module Modulator_test;
 endmodule: Modulator_test
 
 // Encoder testbench
-//TODO Write a good testbench???
 module Encoder_test;
   logic clk;
   initial begin
@@ -318,8 +360,8 @@ module Decoder_test;
   logic             avail;
   logic             pulse;
   //TODO Stop using
-  Encoder #(.PULSE_CT(PULSE_CT), .N_MOD(N_MOD), .L(L), .N_PKT(N_PKT),
-            .PRE_CT(PRE_CT)) dut(.*);
+  //Encoder #(.PULSE_CT(PULSE_CT), .N_MOD(N_MOD), .L(L), .N_PKT(N_PKT),
+  //          .PRE_CT(PRE_CT)) dut(.*);
 
   logic [N_PKT-1:0] data_rcv;
   logic             avail_rcv;
