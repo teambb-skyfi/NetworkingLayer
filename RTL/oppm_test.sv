@@ -223,7 +223,8 @@ module Modulator_test;
     input  pulse;
 
     property not_valid_means_no_pulse;
-      $fell(avail) & ~$past(valid) |-> ~pulse throughout (~avail)[*0:$] ##1 avail;
+      $fell(avail) & ~$past(valid) |->
+      ~pulse throughout (~avail)[*0:$] ##1 avail;
     endproperty
 
     property correct_pulse_width;
@@ -293,7 +294,7 @@ module Encoder_test;
   localparam N_MOD = 2;
   localparam L = 4;
   localparam N_PKT = 8;
-  localparam PRE_CT = 3;
+  localparam PRE_CT = 2;
   logic             rst_n;
   logic [N_PKT-1:0] data;
   logic             start;
@@ -302,29 +303,126 @@ module Encoder_test;
   Encoder #(.PULSE_CT(PULSE_CT), .N_MOD(N_MOD), .L(L), .N_PKT(N_PKT),
     .PRE_CT(PRE_CT)) dut(.*);
 
+  localparam DATA_PULSE_CT = (N_PKT+N_MOD-1) / N_MOD; // Ceiling division
+  localparam TOTAL_PULSE_CT = PRE_CT + DATA_PULSE_CT;
+  localparam NUM_SLOTS = 2**N_MOD;
+
   default clocking cb @(posedge clk);
-    default input #1step output #2;
-    output negedge rst_n;
-    output data;
-    output start;
+    default input #1step output negedge;
+    output rst_n;
+    inout  data;
+    inout  start;
     input  avail;
     input  pulse;
+
+    property correct_pulse_width;
+      $rose(pulse) |-> ##PULSE_CT ~pulse;
+    endproperty
+
+    property correct_avail;
+      avail & start |-> ##1 ~avail;
+    endproperty
+
+    property correct_num_pulses;
+      avail & start |-> $rose(pulse) [->TOTAL_PULSE_CT] ##1 $fell(pulse);  
+    endproperty
   endclocking: cb
 
+  a1: assert property (cb.correct_pulse_width);
+  c1: cover property (cb.correct_pulse_width);
+
+  a2: assert property (cb.correct_avail);
+  c2: cover property (cb.correct_avail);
+
+  a3: assert property (cb.correct_num_pulses);
+  c3: cover property (cb.correct_num_pulses);
+
+  localparam PKT_SENT = 100;
+  int sent_correctly;
+
+  class TestDemodulator;
+    //TODO: Race conditions?
+    logic [N_PKT-1:0] dataEncoded[$];
+    logic [N_MOD-1:0] pulsedData[$];
+    logic [N_PKT-1:0] datumReceived;
+    logic [N_PKT-1:0] dataReceived[$];
+    int tick_ct;
+    int slot_idx;
+
+    task start_receiving;
+      @(posedge cb.pulse);
+      pulsedData.push_back(0);
+      fork
+        // Keep tick ct and slot idx
+        forever begin
+          ##1 tick_ct += 1;
+          tick_ct %= L;
+          if (tick_ct == 0) begin
+            slot_idx += 1;
+            slot_idx %= NUM_SLOTS;
+          end
+        end
+
+        // Receive pulsed data
+        forever begin
+          @(posedge cb.pulse);
+          pulsedData.push_back(slot_idx);
+          if (pulsedData.size == TOTAL_PULSE_CT) begin
+            datumReceived = 0;
+            foreach (pulsedData[i]) begin
+              datumReceived = (datumReceived << N_MOD) + pulsedData[i];
+            end
+            pulsedData.delete;
+            dataReceived.push_back(datumReceived);
+
+            // Check if data received is data encoded
+            assert (dataReceived[$] == dataEncoded[dataReceived.size - 1])
+              sent_correctly += 1;
+            else
+              $error("Incorrect packet received! Sent %h but received %h",
+                dataEncoded[dataReceived.size - 1], dataReceived[$]);
+          end
+        end
+      join_none
+    endtask: start_receiving
+
+    task start_testing;
+      sent_correctly = 0;
+      fork
+        // track_encoding
+        forever begin
+          @(cb.avail & cb.start);
+          @(~cb.avail | ~cb.start);
+          dataEncoded.push_back(cb.data);
+        end
+
+        start_receiving;
+      join_none
+    endtask: start_testing
+
+    task finish_testing;
+      $display("%d of %d successful", sent_correctly, PKT_SENT);
+    endtask: finish_testing
+  endclass: TestDemodulator
+
+  TestDemodulator td;
+
   initial begin
+    td = new;
     rst_n = 1'b0;
     data = {N_MOD{1'b0}};
     start = 1'b0;
+    td.start_testing;
 
     ##1 cb.rst_n <= 1'b1;
 
-    repeat (10) begin
+    repeat (PKT_SENT) begin
       cb.data <= $urandom;
       cb.start <= 1'b1;
       @(negedge cb.avail);
       cb.start <= 1'b0;
 
-      repeat (dut.DATA_PULSE_CT + dut.PRE_CT)
+      repeat (TOTAL_PULSE_CT)
         @(negedge cb.pulse);
 
       // Random gap between packets
@@ -332,7 +430,9 @@ module Encoder_test;
         ##1;
     end
 
-    ##1 $finish;
+    ##2
+    td.finish_testing;
+    $finish;
   end
 endmodule: Encoder_test
 

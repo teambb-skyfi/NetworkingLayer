@@ -264,7 +264,6 @@ module Encoder
         ns = start ? PREAM : IDLE;
         avail = 1'b1;
         clear_pre = ~start;
-        valid_mod = start;
         data_reload = start;
         clear_dp = ~start;
       end
