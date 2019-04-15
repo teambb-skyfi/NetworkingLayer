@@ -287,28 +287,24 @@ module Encoder
   end
 endmodule: Encoder
 
-//outputs a 1 on filtered pulse only if PASTCOUNT
+// Outputs a 1 on filtered pulse only if PASTCOUNT
 // number of previos values were 1.
 module digitalFilter #(parameter HISTORY_SIZE=100)(
   input logic clk, 
   input logic rst_n,
   input logic pulse,
   output logic filteredPulse);
-
-
-
   logic [HISTORY_SIZE-1:0] history;
   ShiftInRegister #(.INWIDTH(1), .OUTWIDTH(HISTORY_SIZE),.DEFVAL(0)) 
     sr0(.clk, .rst_n, .shift(1), .reload(0), .D(pulse), .Q(history)); 
   
   assign filteredPulse = ((history == {HISTORY_SIZE{1'b1}}) && pulse) ? 1'b1 : 1'b0;
-
 endmodule: digitalFilter
 
 //---- Decoder
-module Decoder
 // Decodes packets of data sent as OPPM pulses.
 // Data is received MSB-first.
+module Decoder
 #(parameter PULSE_CT, // Pulse width in clock ticks
             N_MOD,    // Modulation data size in bits
             L,        // Time slot size in clock ticks
@@ -324,11 +320,13 @@ module Decoder
   output logic             avail, // Data is available to be latched
   output logic             error  // Error has happened
 );
-  logic filteredPulse;
-  digitalFilter #(.HISTORY_SIZE(50))(.clk, .rst_n, .pulse, .filteredPulse);
+  //TODO: Move outside Decoder
+  // logic filteredPulse;
+  // digitalFilter #(.HISTORY_SIZE(50))(.clk, .rst_n, .pulse, .filteredPulse);
   
   logic is_edge;
-  EdgeDetector ed(.data(filteredPulse), .*);
+  // EdgeDetector ed(.data(filteredPulse), .*);
+  EdgeDetector ed(.data(pulse), .*);
 
   localparam L_SZ = $clog2(L+1);
   logic             start_oc;

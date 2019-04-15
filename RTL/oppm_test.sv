@@ -437,7 +437,6 @@ module Encoder_test;
 endmodule: Encoder_test
 
 // Decoder testbench
-//TODO Write a good testbench???
 module Decoder_test;
   logic clk;
   initial begin
@@ -448,27 +447,43 @@ module Decoder_test;
   localparam int SEED = 18500;
   initial $srandom(SEED);
 
-  localparam PULSE_CT = 7500;
+  // localparam PULSE_CT = 7500;
+  // localparam N_MOD = 2;
+  // localparam L = 10000;
+  // localparam N_PKT = 8;
+  // localparam PRE_CT = 4;
+  localparam PULSE_CT = 1;
   localparam N_MOD = 2;
-  localparam L = 10000;
+  localparam L = 4;
   localparam N_PKT = 8;
-  localparam PRE_CT = 4;
+  localparam PRE_CT = 2;
   localparam DELTA = 1;
   logic             rst_n;
   logic [N_PKT-1:0] data;
   logic             start;
   logic             avail;
-  logic             pulse;
-  //TODO Stop using
-  //Encoder #(.PULSE_CT(PULSE_CT), .N_MOD(N_MOD), .L(L), .N_PKT(N_PKT),
-  //          .PRE_CT(PRE_CT)) dut(.*);
+  logic             pulse_enc;
+  Encoder #(.PULSE_CT(PULSE_CT), .N_MOD(N_MOD), .L(L), .N_PKT(N_PKT),
+           .PRE_CT(PRE_CT)) dut(.pulse(pulse_enc), .*);
 
+  logic             pulse_dec;
   logic [N_PKT-1:0] data_rcv;
   logic             avail_rcv;
   logic             read;
+  logic             error;
   Decoder #(.PULSE_CT(PULSE_CT), .N_MOD(N_MOD), .L(L), .N_PKT(N_PKT),
-            .PRE_CT(PRE_CT), .DELTA(DELTA)) dut2(.data(data_rcv),
+            .PRE_CT(PRE_CT), .DELTA(DELTA)) dut2(.pulse(pulse_dec),
+                                                 .data(data_rcv),
                                                  .avail(avail_rcv), .*);
+
+  tri0 pulse; // Wire with potentially-multiple drivers
+  assign pulse = (pulse_enc) ? pulse_enc : 1'bz;
+  always_comb begin
+    pulse_dec = pulse_enc;
+  end
+
+  localparam DATA_PULSE_CT = (N_PKT+N_MOD-1) / N_MOD; // Ceiling division
+  localparam TOTAL_PULSE_CT = PRE_CT + DATA_PULSE_CT;
 
   default clocking cb @(posedge clk);
     default input #1step output negedge;
@@ -484,7 +499,7 @@ module Decoder_test;
 
     property encode_to_decode_basic;
       logic [N_PKT-1:0] e_data;
-      (start & avail, e_data = data) |-> ~avail_rcv [*0:$] ##1 avail_rcv & (data_rcv == e_data);
+      (start & avail, e_data = data) |-> ##1 ~avail_rcv [*0:$] ##1 avail_rcv & (data_rcv == e_data);
     endproperty
   endclocking: cb
 
@@ -507,7 +522,7 @@ module Decoder_test;
       @(negedge cb.avail);
       cb.start <= 1'b0;
 
-      repeat (dut.DATA_PULSE_CT + dut.PRE_CT)
+      repeat (TOTAL_PULSE_CT)
         @(negedge cb.pulse);
 
       // Random gap between packets
@@ -515,7 +530,7 @@ module Decoder_test;
         ##1;
     end
 
-    ##1 $finish;
+    ##2 $finish;
   end
 
   initial begin
