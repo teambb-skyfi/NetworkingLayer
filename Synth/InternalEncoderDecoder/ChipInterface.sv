@@ -47,6 +47,8 @@ module ChipInterface(
 
   HextoSevenSegment upperr(data_rcv_Q[7:4], HEX5);
   HextoSevenSegment lowerr(data_rcv_Q[3:0], HEX4);
+
+  digitalFilter #(.HISTORY_SIZE(50))(.clk, .rst_n, .pulse(GPIO_1[6]), .filteredPulse(pulse_rcv));
   
   always_comb begin
     data = SW[N_PKT-1:0];
@@ -59,9 +61,9 @@ module ChipInterface(
     LEDR[7] = pulse_rcv;
     LEDR[8] = avail_rcv;
     LEDR[9] = error;
-    
+
     GPIO_0[5] = pulse;
-    pulse_rcv = GPIO_1[6];
+    //pulse_rcv = GPIO_1[6];
   end
 
   // State register

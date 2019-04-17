@@ -398,7 +398,7 @@ module Decoder
   logic check_for_missing;
 
   // State register
-  enum {WAIT=0, PREAM=1, DATA=2, ERR0=4, ERR1=5, ERR2=6, ERR3=7} s, ns;
+  enum {WAIT=0, PREAM=1, DATA=2, UNKN=3, ERR0=4, ERR1=5, ERR2=6, ERR3=7} s, ns;
   always_ff @(posedge clk, negedge rst_n) begin
     if (~rst_n)
       s <= WAIT;
@@ -525,7 +525,8 @@ module Decoder
         end
       end
 
-      ERR0, ERR1, ERR2, ERR3: begin
+      //TODO: How does UNKN happen???
+      UNKN, ERR0, ERR1, ERR2, ERR3: begin
         ns = WAIT;
         error_happened = 1'b1;
         data_reload = 1'b1;
@@ -534,5 +535,20 @@ module Decoder
         clear_dp = 1'b1;
       end
     endcase
+  end
+
+  logic        uk, e0, e1, e2, e3;
+  logic [31:0] uk_ct, e0_ct, e1_ct, e2_ct, e3_ct;
+  Counter #(.WIDTH(32)) ukCtr(.D(32'd0), .load(1'b0), .up(uk), .Q(uk_ct), .*);
+  Counter #(.WIDTH(32)) e0Ctr(.D(32'd0), .load(1'b0), .up(e0), .Q(e0_ct), .*);
+  Counter #(.WIDTH(32)) e1Ctr(.D(32'd0), .load(1'b0), .up(e1), .Q(e1_ct), .*);
+  Counter #(.WIDTH(32)) e2Ctr(.D(32'd0), .load(1'b0), .up(e2), .Q(e2_ct), .*);
+  Counter #(.WIDTH(32)) e3Ctr(.D(32'd0), .load(1'b0), .up(e3), .Q(e3_ct), .*);
+  always_comb begin
+    uk = (s == UNKN);
+    e0 = (s == ERR0);
+    e1 = (s == ERR1);
+    e2 = (s == ERR2);
+    e3 = (s == ERR3);
   end
 endmodule: Decoder
