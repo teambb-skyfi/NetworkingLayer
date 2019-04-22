@@ -17,12 +17,12 @@ module ChipInterface(
   logic clk;
   assign clk = CLOCK_50;
   
-  localparam PULSE_CT = 7500;
+  localparam PULSE_CT = 30;
   localparam N_MOD = 2;
-  localparam L = 15000;
+  localparam L = 40;
   localparam N_PKT = 8;
   localparam PRE_CT = 4;
-  localparam DELTA = 4000; //TODO Could be reduced; likely not issue anyway
+  localparam DELTA = 19; //TODO Could be reduced; likely not issue anyway
 
   logic [N_PKT-1:0] data;
   logic             start;
