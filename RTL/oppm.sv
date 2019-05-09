@@ -289,16 +289,41 @@ endmodule: Encoder
 
 // Outputs a 1 on filtered pulse only if PASTCOUNT
 // number of previos values were 1.
+//module digitalFilter #(parameter HISTORY_SIZE=100)(
+//  input logic clk, 
+//  input logic rst_n,
+//  input logic pulse,
+//  output logic filteredPulse);
+//  logic [HISTORY_SIZE-1:0] history;
+//  ShiftInRegister #(.INWIDTH(1), .OUTWIDTH(HISTORY_SIZE),.DEFVAL(0)) 
+//    sr0(.clk, .rst_n, .shift(1), .reload(0), .D(pulse), .Q(history)); 
+//  
+//  assign filteredPulse = ((history == {HISTORY_SIZE{1'b1}}) && pulse) ? 1'b1 : 1'b0;
+//endmodule: digitalFilter
 module digitalFilter #(parameter HISTORY_SIZE=100)(
   input logic clk, 
   input logic rst_n,
   input logic pulse,
   output logic filteredPulse);
+  
   logic [HISTORY_SIZE-1:0] history;
+
   ShiftInRegister #(.INWIDTH(1), .OUTWIDTH(HISTORY_SIZE),.DEFVAL(0)) 
     sr0(.clk, .rst_n, .shift(1), .reload(0), .D(pulse), .Q(history)); 
-  
-  assign filteredPulse = ((history == {HISTORY_SIZE{1'b1}}) && pulse) ? 1'b1 : 1'b0;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+  	if(~rst_n) begin
+  		filteredPulse <= 1'b0;
+  	end else begin
+  		filteredPulse <= filteredPulse;
+  		if(history == {HISTORY_SIZE{1'b1}}) begin
+  			filteredPulse <= 1'b1;
+  		end
+  		if(history == {HISTORY_SIZE{1'b0}}) begin
+  			filteredPulse <= 1'b0;
+  		end
+  	end
+  end
 endmodule: digitalFilter
 
 //---- Decoder

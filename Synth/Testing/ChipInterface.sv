@@ -10,30 +10,19 @@ module ChipInterface(
   input  logic [35:0] GPIO_1,
   output logic [ 9:0] LEDR,
   output logic [ 6:0] HEX5, HEX4, HEX1, HEX0);
-
+/*
   logic rst_n;
   assign rst_n = KEY[0];
   
   logic clk;
   assign clk = CLOCK_50;
   
-  localparam PULSE_CT = 7500;
+  localparam PULSE_CT = 30;
   localparam N_MOD = 2;
-  localparam L = 15000;
+  localparam L = 40;
   localparam N_PKT = 8;
-  localparam PRE_CT = 2;
-  localparam DELTA = 4000; //TODO Could be reduced; likely not issue anyway
-
-  localparam HISTORY_SIZE = 10;
-
-//  localparam PULSE_CT = 5;
-//  localparam N_MOD = 2;
-//  localparam L = 30;
-//  localparam N_PKT = 8;
-//  localparam PRE_CT = 2;
-//  localparam DELTA = 10; //TODO Could be reduced; likely not issue anyway
-//
-//  localparam HISTORY_SIZE = 5;
+  localparam PRE_CT = 4;
+  localparam DELTA = 19; //TODO Could be reduced; likely not issue anyway
 
   logic [N_PKT-1:0] data;
   logic             start;
@@ -59,7 +48,7 @@ module ChipInterface(
   HextoSevenSegment upperr(data_rcv_Q[7:4], HEX5);
   HextoSevenSegment lowerr(data_rcv_Q[3:0], HEX4);
 
-  digitalFilter #(.HISTORY_SIZE(HISTORY_SIZE))(.clk, .rst_n, .pulse(GPIO_1[6]), .filteredPulse(pulse_rcv));
+  digitalFilter #(.HISTORY_SIZE(50))(.clk, .rst_n, .pulse(GPIO_1[6]), .filteredPulse(pulse_rcv));
   
   always_comb begin
     data = SW[N_PKT-1:0];
@@ -129,4 +118,16 @@ module ChipInterface(
   logic [31:0] avail_ct, error_ct;
   Counter #(.WIDTH(32)) availCtr(.D(32'd0), .load(1'b0), .up(avail_rcv), .Q(avail_ct), .*);
   Counter #(.WIDTH(32)) errorCtr(.D(32'd0), .load(1'b0), .up(error),     .Q(error_ct), .*);
+*/
+  logic rst_n;
+  assign rst_n = KEY[0];
+
+  logic clk;
+  assign clk = CLOCK_50;
+
+  logic filteredPulse;
+  digitalFilter #(.HISTORY_SIZE(25))(.clk, .rst_n, .pulse(GPIO_1[6]), .filteredPulse);
+  EdgeDetector(.data(filteredPulse), .clk, .rst_n, .is_edge(GPIO_0[5]));
+  
+  assign LEDR = 10'b0000000011;
 endmodule: ChipInterface
